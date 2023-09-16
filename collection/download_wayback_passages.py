@@ -209,6 +209,7 @@ def crawl_wayback_machine(
                 logging.info(f'Processed {i + 1} / {len(links)} links...')
 
     # Combine small files together into larger files
+    '''
     for worker_output_dir in output_path.iterdir():
         if worker_output_dir.is_dir():
             with open(output_path / f'{worker_output_dir.name}.jsonl', 'w') as outfile:
@@ -217,7 +218,15 @@ def crawl_wayback_machine(
                         outfile.write(infile.read())
 
             shutil.rmtree(worker_output_dir)
-
+    '''
+    with open(output_path / 'qrecc_en.jsonl', 'w') as outfile:
+      for worker_output_dir in output_path.iterdir():
+        if worker_output_dir.is_dir():
+          for single_doc_file in worker_output_dir.iterdir():
+            with open(single_doc_file) as infile:
+              outfile.write(infile.read())
+          shutil.rmtree(worker_output_dir)	  	
+    
     df = pd.DataFrame.from_records(records)
     df.to_csv(output_path / 'summary.tsv', index=False, sep='\t')
 
