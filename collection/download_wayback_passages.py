@@ -24,6 +24,7 @@ import uuid
 
 from bs4 import BeautifulSoup
 import pandas as pd
+# from colabtools import f1
 
 
 wayback_prefix = re.compile(r'^https:\/\/web\.archive\.org\/web')
@@ -40,6 +41,9 @@ blacklist = [
     'style',
     # there may be more elements we don't want
 ]
+
+retry_limit = 10
+CNS_RECORDIO_PATH = '/cns/jj-d/home/cloudai-discovery/ucs/data/eval/qrecc.recordio'
 
 
 def download_with_retry(url: str, max_retries: int = 10) -> requests.Response:
@@ -72,7 +76,7 @@ def download_with_retry(url: str, max_retries: int = 10) -> requests.Response:
 def extract_text(html_text: str) -> str:
     """Extracts text from an HTML document."""
     soup = BeautifulSoup(html_text, 'html.parser')
-    text = soup.find_all(text=True)
+    text = soup.find_all(string=True)
     output = ''
     for t in text:
         if t.parent.name not in blacklist:
@@ -168,57 +172,101 @@ def download_link(tup):
             'status_code': None,
             'wayback_url': url_no_header,
         }
+    
+
+def get_urls_from_cns_recordio(path: str, file_format: str = 'recordio') -> set[str]:
+  '''Return a set of all urls from recordio file. Not working since missing f1'''
+  conversations = f1.Execute('''
+    DEFINE TABLE Conversations (
+      format='{1}',
+      proto = 'global_proto_db.cloud.ml.retail.search.models.conversational_search.evaluator.conversation.Conversation',
+      path='{0}');
+    SELECT * FROM Conversations;
+  '''.format(path, file_format))
+
+  row_cnt = 0
+  url_set = set()
+  for index, row in conversations.iterrows():
+    #if i > 0: break
+    for turn in row['turn']:
+      for ideal_result in turn.assistant.ideal_result:
+        url_set.add(ideal_result.url)
+    row_cnt += 1
+
+  print("Total row number: {}".format(row_cnt))
+  print("Total url number from recordio: {}".format(len(url_set)))
+  return list(url_set)
+
+
+def get_urls_from_local_json(path: str) -> list[str]:
+  all_links = set()
+  for dataset in glob.glob(path):
+      with open(dataset) as f:
+          data = json.load(f)
+          for conversation_turn in data:
+              if conversation_turn['Answer_URL'] == '':
+                  continue
+
+              for url in conversation_turn['Answer_URL'].split(' '):
+                  if url.endswith('.pdf'):
+                      continue
+
+                  anchor_sign_pos = url.find('#')
+                  if anchor_sign_pos != -1:
+                      url = url.split('#')[0]
+
+                  all_links.add(url)
+  all_links = list(all_links)
+  print("Total url number from local json: {}".format(len(all_links)))
+  return all_links
 
 
 def crawl_wayback_machine(
     inputs_globbing_pattern: str, output_dir: str, num_workers: int
 ) -> None:
-    links = set()
-    for dataset in glob.glob(inputs_globbing_pattern):
-        with open(dataset) as f:
-            data = json.load(f)
-            for conversation_turn in data:
-                if conversation_turn['Answer_URL'] == '':
-                    continue
 
-                for url in conversation_turn['Answer_URL'].split(' '):
-                    if url.endswith('.pdf'):
-                        continue
-
-                    anchor_sign_pos = url.find('#')
-                    if anchor_sign_pos != -1:
-                        url = url.split('#')[0]
-
-                    links.add(url)
-    links = list(links)
+    links = get_urls_from_local_json(inputs_globbing_pattern)
+    # recordio_links_set = get_urls_from_cns_recordio(CNS_RECORDIO_PATH)
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    records = []
-    with multiprocessing.Pool(num_workers) as p:
-        for i, result in enumerate(
-            p.imap_unordered(
-                download_link,
-                [(l, output_path, num_workers) for l in links],
-                chunksize=16,
-            )
-        ):
-            records.append(result)
-            if (i + 1) % 10 == 0:
-                logging.info(f'Processed {i + 1} / {len(links)} links...')
+    retry_cnt = 0
+
+    while retry_cnt < retry_limit and len(links) > 0:
+        records = []
+        failed_links = []
+        logging.info(f'Retry Num: {retry_cnt}, downloads {len(links)} links')
+        with multiprocessing.Pool(num_workers) as p:
+            for i, result in enumerate(
+                p.imap_unordered(
+                    download_link,
+                    [(l, output_path, num_workers) for l in links],
+                    chunksize=16,
+                )
+            ):
+                records.append(result)
+                if result['available'] == False:
+                    failed_links.append(result['link'])
+                    logging.info(f"{result['link']} is appended to failed_links") 
+                if (i + 1) % 10 == 0:
+                    logging.info(f'Processed {i + 1} / {len(links)} links...')
+        logging.info(f'Request {len(links)}, {len(failed_links)} links fail.')
+        links = failed_links
+        retry_cnt += 1
+    
+    # Checking whether the missed links are in the links set from the recordio queryset
+    '''
+    missed_links = []
+    for failed_link in failed_links:
+        if failed_link in recordio_links_set:
+            logging.info(f'The document of link: {failed_link} in recordio queryset is missed.')
+            missed_links.append(failed_link)
+    logging.warning(f'Total {len(missed_links)} documents in queryset are missed.')
+    '''
 
     # Combine small files together into larger files
-    '''
-    for worker_output_dir in output_path.iterdir():
-        if worker_output_dir.is_dir():
-            with open(output_path / f'{worker_output_dir.name}.jsonl', 'w') as outfile:
-                for single_doc_file in worker_output_dir.iterdir():
-                    with open(single_doc_file) as infile:
-                        outfile.write(infile.read())
 
-            shutil.rmtree(worker_output_dir)
-    '''
     with open(output_path / 'qrecc_en.jsonl', 'w') as outfile:
       for worker_output_dir in output_path.iterdir():
         if worker_output_dir.is_dir():
@@ -229,6 +277,18 @@ def crawl_wayback_machine(
     
     df = pd.DataFrame.from_records(records)
     df.to_csv(output_path / 'summary.tsv', index=False, sep='\t')
+
+    '''
+    with open(output_path / 'missed_links.txt', 'w') as missed_links_file:
+        for missed in missed_links:
+            missed_links_file.write(missed)
+            missed_links_file.write('\n')
+    '''
+            
+    with open(output_path / 'failed_links.txt', 'w') as missed_links_file:
+        for failed in failed_links:
+            missed_links_file.write(failed)
+            missed_links_file.write('\n')
 
 
 if __name__ == '__main__':
@@ -249,5 +309,12 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
+    '''
+    with open(Path('/usr/local/google/home/jingjacobli/gitrepo/ml-qrecc/collection') / 'missed_links.txt', 'w') as missed_links_file:
+        for i in range(11):
+            missed_links_file.write(str(i))
+            missed_links_file.write('\n')
+    '''
+    
     logging.basicConfig(level=logging.INFO)
     crawl_wayback_machine(args.inputs, args.output_directory, args.workers)
