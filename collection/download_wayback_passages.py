@@ -226,7 +226,9 @@ def crawl_wayback_machine(
 ) -> None:
 
     links = get_urls_from_local_json(inputs_globbing_pattern)
-    # recordio_links_set = get_urls_from_cns_recordio(CNS_RECORDIO_PATH)
+    """ links = ['https://en.wikipedia.org/wiki/Jusuf_Kall', 
+             'https://en.wikipedia.org/wiki/Luigi_Luzzattil', 
+             'https://en.wikipedia.org/wiki/The_Casbah_(Derry_music_venue)'] """
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
