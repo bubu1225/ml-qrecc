@@ -11,8 +11,15 @@ import logging
 import multiprocessing
 from pathlib import Path
 from typing import List, Tuple
+import random
 
-MIN_PASSAGE_TOKENS = 220
+MIN_PASSAGE_TOKENS = 3000
+WIKI_LINK = 'wikipedia.org'
+LINKEDIN = 'linkedin.com'
+THRESHOLD = 20
+
+good_url_cnt = 0
+bad_url_cnt = 0
 
 
 def chunk_doc(content: str) -> List[str]:
@@ -39,6 +46,18 @@ def chunk_doc(content: str) -> List[str]:
     return passages
 
 
+def is_good_url(url: str) -> bool:
+    if WIKI_LINK in url:
+        return True
+    return False
+    if LINKEDIN in url:
+        return False
+    random_number = random.randint(1, 100)
+    if random_number <= THRESHOLD:
+        return True
+    return False
+    
+
 def process_file(tup: Tuple[str, str, Path]) -> None:
     """Chunk all documents in a single file."""
     input_directory, output_directory, input_file = tup
@@ -49,6 +68,10 @@ def process_file(tup: Tuple[str, str, Path]) -> None:
     with open(input_file) as f1, open(output_path, 'w') as f2:
         for jsonl in f1:
             doc = json.loads(jsonl)
+            if not is_good_url(doc['id']):
+                #bad_url_cnt +=1
+                continue
+            #good_url_cnt +=1
             passages = chunk_doc(doc['contents'])
 
             for i, passage in enumerate(passages):
@@ -99,4 +122,7 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO)
 
+
     chunk_documents(args.input_directory, args.output_directory, args.workers)
+    #print(f'Good url link: {good_url_cnt}')
+    #print(f'Bad url link: {bad_url_cnt}')
