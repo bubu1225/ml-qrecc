@@ -2,3 +2,5 @@ dataset/__MACOSX/
 dataset/qrecc_test.json
 dataset/qrecc_train.json
 .DS_Store
+collection/.venv/
+dataset/.venv/
