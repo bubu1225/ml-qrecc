@@ -73,7 +73,7 @@ def download_with_retry(url: str, max_retries: int = 10) -> requests.Response:
             retry_num += 1
 
 
-def extract_text(html_text: str) -> str:
+def extract_text(html_text: str) -> list[str]:
     """Extracts text from an HTML document."""
     soup = BeautifulSoup(html_text, 'html.parser')
     text = soup.find_all(string=True)
@@ -82,7 +82,8 @@ def extract_text(html_text: str) -> str:
         if t.parent.name not in blacklist:
             output += f'{t} '
 
-    return output
+    title = soup.title.string
+    return [title, output]
 
 
 def download_link(tup):
@@ -124,7 +125,7 @@ def download_link(tup):
 
         response = download_with_retry(url_no_header)
         html_page = response.text
-        parsed_text = extract_text(html_page)
+        [parsed_title, parsed_text] = extract_text(html_page)
 
         proc = multiprocessing.current_process()
         pid_mod = str(proc.pid % num_workers)
@@ -134,9 +135,11 @@ def download_link(tup):
         with open(output_path / pid_mod / page_id, 'w') as f:
             doc = {
                 'id': url_no_header,
+                'url': link,
+                'title': parsed_title,
                 'contents': parsed_text,
             }
-            f.write(json.dumps(doc) + '\n')
+            f.write(json.dumps(doc, ensure_ascii=False) + '\n')
 
         return {
             'link': link,
