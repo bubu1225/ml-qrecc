@@ -46,56 +46,95 @@ def chunk_doc(content: str) -> List[str]:
     return passages
 
 
-def is_good_url(url: str) -> bool:
+def is_wikipedia_url(url: str) -> bool:
     if WIKI_LINK in url:
         return True
     return False
-    if LINKEDIN in url:
+    """ if LINKEDIN in url:
         return False
     random_number = random.randint(1, 100)
     if random_number <= THRESHOLD:
         return True
-    return False
+    return False """
     
 
-def process_file(tup: Tuple[str, str, Path]) -> None:
+def process_file(url_set: set, tup: Tuple[str, str, Path]) -> int:
     """Chunk all documents in a single file."""
     input_directory, output_directory, input_file = tup
     output_file = str(input_file).replace(input_directory, output_directory)
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    max_page_cnt = 0
     with open(input_file) as f1, open(output_path, 'w') as f2:
         for jsonl in f1:
             doc = json.loads(jsonl)
-            if not is_good_url(doc['id']):
-                #bad_url_cnt +=1
+            if not is_wikipedia_url(doc['url']):
                 continue
-            #good_url_cnt +=1
+            url_set.add(doc['url'])
             passages = chunk_doc(doc['contents'])
 
             for i, passage in enumerate(passages):
-                paragraph = {'id': f"{doc['id']}_p{i}", 'contents': passage}
+                paragraph = {'id': f"{doc['id']}_p{i}",
+                             'url': doc['url'],
+                             'title': doc['title'],
+                             'contents': passage}
 
-                f2.write(json.dumps(paragraph) + '\n')
+                f2.write(json.dumps(paragraph, ensure_ascii=False) + '\n')
+            max_page_cnt = max(max_page_cnt, len(passages))   
+    return max_page_cnt
 
-
-def chunk_documents(input_directory: str, output_directory: str, workers: int) -> None:
+def chunk_documents_concurrent(input_directory: str, output_directory: str, workers: int) -> set:
     """Iterate .jsonl files in input_directory and output .jsonl files in output_directory where each doc is chunked."""
     input_directory_path = Path(input_directory)
 
     jsonl_files = list(input_directory_path.glob('**/*.jsonl'))
-
+ 
     with multiprocessing.Pool(workers) as p:
         for i, _ in enumerate(
             p.imap_unordered(
                 process_file,
-                [(input_directory, output_directory, f) for f in jsonl_files],
+                [(url_set, (input_directory, output_directory, f)) for f in jsonl_files],
                 chunksize=16,
             )
         ):
             if (i + 1) % 100 == 0:
                 logging.info(f'Processed {i + 1} / {len(jsonl_files)} files...')
+                print(f'Processed {i + 1} / {len(jsonl_files)} files...')
+
+    return url_set
+
+
+def chunk_documents(input_directory: str, output_directory: str, workers: int) -> set:
+    """Iterate .jsonl files in input_directory and output .jsonl files in output_directory where each doc is chunked."""
+    input_directory_path = Path(input_directory)
+
+    jsonl_files = list(input_directory_path.glob('**/*.jsonl'))
+    url_set = set()
+
+    max_page_cnt = 0
+    for f in jsonl_files:
+        max_page_cnt = process_file(url_set, (input_directory, output_directory, f))
+        print(f'The largest file is splited to {max_page_cnt}')        
+
+    return url_set
+
+
+
+def check_documents(input_directory: str):
+    """Check each documents in sequence"""
+    good_url_cnt = 0
+    input_directory_path = Path(input_directory)
+    jsonl_files = list(input_directory_path.glob('**/*.jsonl'))
+    for jsonl_file in jsonl_files:
+        with open(jsonl_file) as f1:
+            for jsonl in f1:
+                doc = json.loads(jsonl)
+                if is_wikipedia_url(doc['url']) and doc['contents'] != '':
+                    good_url_cnt += 1
+    
+    print(f'the document cnt with good urls: {good_url_cnt}')
+
 
 
 if __name__ == '__main__':
@@ -122,7 +161,7 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO)
 
-
-    chunk_documents(args.input_directory, args.output_directory, args.workers)
-    #print(f'Good url link: {good_url_cnt}')
+    check_documents(args.input_directory)
+    all_url_set = chunk_documents(args.input_directory, args.output_directory, args.workers)
+    print(f'Total documents cnt: {len(all_url_set)}')
     #print(f'Bad url link: {bad_url_cnt}')
