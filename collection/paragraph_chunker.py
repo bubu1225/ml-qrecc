@@ -12,38 +12,52 @@ import multiprocessing
 from pathlib import Path
 from typing import List, Tuple
 import random
+import spacy
 
 MIN_PASSAGE_TOKENS = 3000
 WIKI_LINK = 'wikipedia.org'
 LINKEDIN = 'linkedin.com'
 THRESHOLD = 20
 
-good_url_cnt = 0
-bad_url_cnt = 0
+nlp = spacy.load("en_core_web_sm")
 
 
 def chunk_doc(content: str) -> List[str]:
     """Given a document, return a list of passages of no fewer than MIN_PASSAGE_TOKENS tokens / passage until EOF."""
     passages = []
     passage_tokens = []
-    lines = content.split('\n')
-    for line in lines:
-        line = line.rstrip()
+    # lines = content.split('\n')
 
-        if '===' in line:
-            continue
-        if len(line) == 0:
-            continue
+    nlp_content = nlp(content)
 
+    chunks = []    
+    current_chunk = []
+    current_chunk_tokens = 0
+
+    for sentence in nlp_content.sents:
+        sentence_tokens = len(sentence)
+        
+        if current_chunk_tokens + sentence_tokens <= MIN_PASSAGE_TOKENS:
+            current_chunk.append(sentence.text)
+            current_chunk_tokens += sentence_tokens
+        else:
+            # print(f'current_chunk size: {len(current_chunk)}')
+            chunks.append(" ".join(current_chunk))
+            current_chunk = list(sentence.text)
+            current_chunk_tokens = sentence_tokens
+
+
+
+    '''for line in nlp_content.sents:
         tokens = line.split()
         passage_tokens.extend(tokens)
 
         if len(passage_tokens) > MIN_PASSAGE_TOKENS:
             passages.append(' '.join(passage_tokens))
-            passage_tokens = []
+            passage_tokens = []'''
 
-    passages.append(' '.join(passage_tokens))
-    return passages
+    chunks.append(" ".join(current_chunk))
+    return chunks
 
 
 def is_wikipedia_url(url: str) -> bool:
@@ -58,7 +72,7 @@ def is_wikipedia_url(url: str) -> bool:
     return False """
     
 
-def process_file(url_set: set, tup: Tuple[str, str, Path]) -> int:
+def process_file(tup: Tuple[str, str, Path]) -> int:
     """Chunk all documents in a single file."""
     input_directory, output_directory, input_file = tup
     output_file = str(input_file).replace(input_directory, output_directory)
@@ -71,7 +85,7 @@ def process_file(url_set: set, tup: Tuple[str, str, Path]) -> int:
             doc = json.loads(jsonl)
             if not is_wikipedia_url(doc['url']):
                 continue
-            url_set.add(doc['url'])
+            # url_set.add(doc['url'])
             passages = chunk_doc(doc['contents'])
 
             for i, passage in enumerate(passages):
@@ -94,7 +108,7 @@ def chunk_documents_concurrent(input_directory: str, output_directory: str, work
         for i, _ in enumerate(
             p.imap_unordered(
                 process_file,
-                [(url_set, (input_directory, output_directory, f)) for f in jsonl_files],
+                [(input_directory, output_directory, f) for f in jsonl_files],
                 chunksize=16,
             )
         ):
@@ -102,7 +116,7 @@ def chunk_documents_concurrent(input_directory: str, output_directory: str, work
                 logging.info(f'Processed {i + 1} / {len(jsonl_files)} files...')
                 print(f'Processed {i + 1} / {len(jsonl_files)} files...')
 
-    return url_set
+    # return url_set
 
 
 def chunk_documents(input_directory: str, output_directory: str, workers: int) -> set:
@@ -162,6 +176,9 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
     check_documents(args.input_directory)
-    all_url_set = chunk_documents(args.input_directory, args.output_directory, args.workers)
-    print(f'Total documents cnt: {len(all_url_set)}')
+
+    chunk_documents_concurrent(args.input_directory, args.output_directory, args.workers)
+
+    #all_url_set = chunk_documents(args.input_directory, args.output_directory, args.workers)
+    #print(f'Total documents cnt: {len(all_url_set)}')
     #print(f'Bad url link: {bad_url_cnt}')
