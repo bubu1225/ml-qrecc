@@ -66,6 +66,10 @@ def process_file(url_set: set, tup: Tuple[str, str, Path]) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     max_page_cnt = 0
+    # this dictionary maps the page cnt to the document cnt.
+    # e.g. if 3 documents are splitted to 10 pages; 2 documents are splitted to 8 pages, then
+    # page_cnt_to_document_cnt = {10: 3, 8: 2}
+    page_cnt_to_document_cnt = {}
     with open(input_file) as f1, open(output_path, 'w') as f2:
         for jsonl in f1:
             doc = json.loads(jsonl)
@@ -81,8 +85,15 @@ def process_file(url_set: set, tup: Tuple[str, str, Path]) -> int:
                              'contents': passage}
 
                 f2.write(json.dumps(paragraph, ensure_ascii=False) + '\n')
-            max_page_cnt = max(max_page_cnt, len(passages))   
-    return max_page_cnt
+
+            page_cnt = len(passages)
+            max_page_cnt = max(max_page_cnt, page_cnt)
+            if page_cnt not in page_cnt_to_document_cnt:
+                page_cnt_to_document_cnt[page_cnt] = 0
+            page_cnt_to_document_cnt[page_cnt] += 1
+
+    return (max_page_cnt, page_cnt_to_document_cnt)
+
 
 def chunk_documents_concurrent(input_directory: str, output_directory: str, workers: int) -> set:
     """Iterate .jsonl files in input_directory and output .jsonl files in output_directory where each doc is chunked."""
@@ -114,15 +125,17 @@ def chunk_documents(input_directory: str, output_directory: str, workers: int) -
 
     max_page_cnt = 0
     for f in jsonl_files:
-        max_page_cnt = process_file(url_set, (input_directory, output_directory, f))
+        (max_page_cnt, page_cnt_map) = process_file(url_set, (input_directory, output_directory, f))
         print(f'The largest file is splited to {max_page_cnt}')        
-
+        sorted_keys = sorted(page_cnt_map.keys())
+        for sorted_key in sorted_keys:
+            print(f'{sorted_key}: {page_cnt_map[sorted_key]}')
     return url_set
 
 
 
 def check_documents(input_directory: str):
-    """Check each documents in sequence"""
+    """Check whether the documents' url is wikipedia or not. And counts the wikipedia documents number """
     good_url_cnt = 0
     input_directory_path = Path(input_directory)
     jsonl_files = list(input_directory_path.glob('**/*.jsonl'))
